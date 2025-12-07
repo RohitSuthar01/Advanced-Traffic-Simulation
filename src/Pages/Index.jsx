@@ -1,600 +1,564 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Car, Ambulance, Pause, Play, RotateCcw, AlertCircle } from 'lucide-react';
 
 const TrafficSimulation = () => {
   const [isRunning, setIsRunning] = useState(false);
+  const [currentPhase, setCurrentPhase] = useState('STOPPED');
   const [timer, setTimer] = useState(0);
-  const [currentPhase, setCurrentPhase] = useState('ns-green');
-  const [currentMode, setCurrentMode] = useState('normal');
-  const [currentWeather, setCurrentWeather] = useState('clear');
+  const [mode, setMode] = useState('smart');
+  const [weather, setWeather] = useState('clear');
   const [vehicles, setVehicles] = useState([]);
+  const [stats, setStats] = useState({
+    nsTraffic: 0,
+    ewTraffic: 0,
+    totalVehicles: 0,
+    vehiclesPassed: 0,
+    avgWaitTime: 0,
+    avgSpeed: 0,
+    queueLength: 0,
+    efficiency: 0
+  });
   const [settings, setSettings] = useState({
     greenTime: 15,
     yellowTime: 3,
-    vehicleFrequency: 5
+    vehicleFreq: 5
   });
-  const [statistics, setStatistics] = useState({
-    vehiclesPassed: 0,
-    totalWaitTime: 0,
-    totalVehicles: 0
-  });
-  const [trafficLights, setTrafficLights] = useState({
+  const [emergencyMode, setEmergencyMode] = useState(false);
+
+  const nextIdRef = useRef(0);
+  const phaseTimerRef = useRef(null);
+  const spawnTimerRef = useRef(null);
+  const animationRef = useRef(null);
+
+  const directions = ['north', 'south', 'east', 'west'];
+
+  // Traffic light states: NS = North-South, EW = East-West
+  const [lightStates, setLightStates] = useState({
     ns: 'red',
     ew: 'red'
   });
-  
-  const phaseTimerRef = useRef(0);
-  const vehicleIdRef = useRef(0);
 
-  // Vehicle class logic
-  const createVehicle = (type, direction) => {
-    const speeds = { car: 60, truck: 45, bus: 50, ambulance: 80 };
-    let speed = speeds[type] + (Math.random() * 20 - 10);
-    if (currentWeather === 'rain') speed *= 0.7;
-    if (currentWeather === 'fog') speed *= 0.5;
-
-    const positions = {
-      north: { x: 190, y: 450 },
-      south: { x: 260, y: 0 },
-      east: { x: 0, y: 190 },
-      west: { x: 450, y: 260 }
-    };
-
-    return {
-      id: vehicleIdRef.current++,
-      type,
-      direction,
-      speed,
-      position: { ...positions[direction] },
-      waitTime: 0,
-      isWaiting: false
-    };
-  };
-
-  const isNearIntersection = (vehicle) => {
-    const center = 225;
-    const range = 120;
-    const { x, y } = vehicle.position;
-
-    switch (vehicle.direction) {
-      case 'north': return y <= center + range && y >= center;
-      case 'south': return y >= center - range && y <= center;
-      case 'east': return x >= center - range && x <= center;
-      case 'west': return x <= center + range && x >= center;
-      default: return false;
-    }
-  };
-
-  const isOutOfBounds = (vehicle) => {
-    const { x, y } = vehicle.position;
-    return x < -70 || x > 520 || y < -70 || y > 520;
-  };
-
-  // Main simulation loop
-  useEffect(() => {
-    if (!isRunning) return;
-
-    const interval = setInterval(() => {
-      setTimer(t => t + 1);
-      phaseTimerRef.current += 1;
-
-      // Update traffic light phase
-      updateTrafficLightPhase();
-
-      // Spawn vehicles
-      spawnVehicles();
-
-      // Move vehicles
-      setVehicles(prevVehicles => {
-        const updatedVehicles = prevVehicles.map(vehicle => {
-          let canMove = true;
-
-          if (isNearIntersection(vehicle)) {
-            if (vehicle.type === 'ambulance') {
-              canMove = true;
-            } else if (vehicle.direction === 'north' || vehicle.direction === 'south') {
-              canMove = trafficLights.ns === 'green';
-            } else {
-              canMove = trafficLights.ew === 'green';
-            }
-          }
-
-          if (!canMove && isNearIntersection(vehicle)) {
-            return { ...vehicle, isWaiting: true, waitTime: vehicle.waitTime + 1 };
-          }
-
-          const moveDistance = (vehicle.speed / 3600) * 100;
-          const newPosition = { ...vehicle.position };
-
-          switch (vehicle.direction) {
-            case 'north': newPosition.y -= moveDistance; break;
-            case 'south': newPosition.y += moveDistance; break;
-            case 'east': newPosition.x += moveDistance; break;
-            case 'west': newPosition.x -= moveDistance; break;
-          }
-
-          return { ...vehicle, position: newPosition, isWaiting: false };
-        });
-
-        // Update statistics
-        setStatistics(prev => ({
-          ...prev,
-          totalWaitTime: prev.totalWaitTime + updatedVehicles.filter(v => v.isWaiting).length
-        }));
-
-        // Cleanup out of bounds vehicles
-        const inBoundsVehicles = updatedVehicles.filter(vehicle => {
-          if (isOutOfBounds(vehicle)) {
-            setStatistics(prev => ({
-              ...prev,
-              vehiclesPassed: prev.vehiclesPassed + 1
-            }));
-            return false;
-          }
-          return true;
-        });
-
-        return inBoundsVehicles;
-      });
-    }, 100);
-
-    return () => clearInterval(interval);
-  }, [isRunning, trafficLights, currentWeather, currentMode, settings]);
-
-  const updateTrafficLightPhase = () => {
-    const greenTime = settings.greenTime * 10;
-    const yellowTime = settings.yellowTime * 10;
-
-    if (currentMode === 'smart') {
-      smartTrafficControl();
-      return;
-    }
-
-    const phaseTimer = phaseTimerRef.current;
-
-    switch (currentPhase) {
-      case 'ns-green':
-        if (phaseTimer >= greenTime) {
-          setCurrentPhase('ns-yellow');
-          setTrafficLights({ ns: 'yellow', ew: 'red' });
-          phaseTimerRef.current = 0;
-        }
-        break;
-      case 'ns-yellow':
-        if (phaseTimer >= yellowTime) {
-          setCurrentPhase('ew-green');
-          setTrafficLights({ ns: 'red', ew: 'green' });
-          phaseTimerRef.current = 0;
-        }
-        break;
-      case 'ew-green':
-        if (phaseTimer >= greenTime) {
-          setCurrentPhase('ew-yellow');
-          setTrafficLights({ ns: 'red', ew: 'yellow' });
-          phaseTimerRef.current = 0;
-        }
-        break;
-      case 'ew-yellow':
-        if (phaseTimer >= yellowTime) {
-          setCurrentPhase('ns-green');
-          setTrafficLights({ ns: 'green', ew: 'red' });
-          phaseTimerRef.current = 0;
-        }
-        break;
-    }
-  };
-
-  const smartTrafficControl = () => {
-    const nsCount = vehicles.filter(v => 
-      (v.direction === 'north' || v.direction === 'south') && isNearIntersection(v)
+  // Sensor data for AI decision making
+  const getSensorData = () => {
+    const nsCount = vehicles.filter(v =>
+      (v.direction === 'north' || v.direction === 'south') && !v.passed
     ).length;
-    
-    const ewCount = vehicles.filter(v => 
-      (v.direction === 'east' || v.direction === 'west') && isNearIntersection(v)
+    const ewCount = vehicles.filter(v =>
+      (v.direction === 'east' || v.direction === 'west') && !v.passed
     ).length;
 
-    const minGreenTime = 5 * 10;
-    const yellowTime = settings.yellowTime * 10;
-    const phaseTimer = phaseTimerRef.current;
-
-    if (currentPhase === 'ns-green' && phaseTimer >= minGreenTime && ewCount > nsCount * 1.5) {
-      setCurrentPhase('ns-yellow');
-      setTrafficLights({ ns: 'yellow', ew: 'red' });
-      phaseTimerRef.current = 0;
-    } else if (currentPhase === 'ew-green' && phaseTimer >= minGreenTime && nsCount > ewCount * 1.5) {
-      setCurrentPhase('ew-yellow');
-      setTrafficLights({ ns: 'red', ew: 'yellow' });
-      phaseTimerRef.current = 0;
-    } else if (currentPhase === 'ns-yellow' && phaseTimer >= yellowTime) {
-      setCurrentPhase('ew-green');
-      setTrafficLights({ ns: 'red', ew: 'green' });
-      phaseTimerRef.current = 0;
-    } else if (currentPhase === 'ew-yellow' && phaseTimer >= yellowTime) {
-      setCurrentPhase('ns-green');
-      setTrafficLights({ ns: 'green', ew: 'red' });
-      phaseTimerRef.current = 0;
-    }
+    return { nsCount, ewCount };
   };
 
-  const spawnVehicles = () => {
-    const spawnRate = settings.vehicleFrequency / 100;
-    const directions = ['north', 'south', 'east', 'west'];
-    const vehicleTypes = ['car', 'truck', 'bus'];
+  // AI-powered traffic light control
+  const aiDecidePhase = () => {
+    const { nsCount, ewCount } = getSensorData();
+    const hasEmergency = vehicles.some(v => v.isEmergency && !v.passed);
 
-    directions.forEach(direction => {
-      if (Math.random() < spawnRate) {
-        const type = vehicleTypes[Math.floor(Math.random() * vehicleTypes.length)];
-        const newVehicle = createVehicle(type, direction);
-        setVehicles(prev => [...prev, newVehicle]);
-        setStatistics(prev => ({ ...prev, totalVehicles: prev.totalVehicles + 1 }));
+    if (hasEmergency) {
+      const emergencyVehicle = vehicles.find(v => v.isEmergency && !v.passed);
+      if (emergencyVehicle) {
+        return ['north', 'south'].includes(emergencyVehicle.direction) ? 'NS_GREEN' : 'EW_GREEN';
       }
+    }
+
+    if (mode === 'smart') {
+      // AI logic: Give green to direction with more traffic
+      if (nsCount > ewCount + 2) return 'NS_GREEN';
+      if (ewCount > nsCount + 2) return 'EW_GREEN';
+    }
+
+    // Default alternating pattern
+    return currentPhase === 'NS_GREEN' || currentPhase === 'NS_YELLOW' ? 'EW_GREEN' : 'NS_GREEN';
+  };
+
+  // Vehicle spawning
+  const spawnVehicle = () => {
+    if (!isRunning || vehicles.length > 50) return;
+
+    const direction = directions[Math.floor(Math.random() * directions.length)];
+    const isEmergency = emergencyMode || Math.random() < 0.05; // 5% chance of ambulance
+
+    const startPositions = {
+      north: { x: 48, y: -10 },
+      south: { x: 52, y: 110 },
+      east: { x: 110, y: 48 },
+      west: { x: -10, y: 52 }
+    };
+
+    const newVehicle = {
+      id: nextIdRef.current++,
+      direction,
+      isEmergency,
+      ...startPositions[direction],
+      speed: isEmergency ? 3 : 1.5,
+      waitTime: 0,
+      passed: false,
+      stopped: false
+    };
+
+    setVehicles(prev => [...prev, newVehicle]);
+  };
+
+  // Check if vehicle should stop at red light
+const shouldStop = (vehicle) => {
+  // 🚨 Emergency vehicles NEVER stop
+  if (vehicle.isEmergency) return false;
+
+  const { direction, x, y } = vehicle;
+  const nsGreen = lightStates.ns === 'green';
+  const ewGreen = lightStates.ew === 'green';
+
+  const stopPositions = {
+    north: y >= 35 && y <= 40,
+    south: y >= 60 && y <= 65,
+    east: x >= 60 && x <= 65,
+    west: x >= 35 && x <= 40
+  };
+
+  if (direction === 'north' || direction === 'south') {
+    return !nsGreen && stopPositions[direction];
+  } else {
+    return !ewGreen && stopPositions[direction];
+  }
+};
+
+
+  // Update vehicle positions
+  const updateVehicles = () => {
+    setVehicles(prev => {
+      const updated = prev.map(vehicle => {
+        if (vehicle.passed) return vehicle;
+
+        const shouldStopNow = shouldStop(vehicle);
+        let newX = vehicle.x;
+        let newY = vehicle.y;
+        let newWaitTime = vehicle.waitTime;
+
+        if (shouldStopNow) {
+          newWaitTime += 0.1;
+          return { ...vehicle, stopped: true, waitTime: newWaitTime };
+        }
+
+        // Move vehicle
+        const speed = vehicle.isEmergency ? 2.5 : 1.2;
+        switch (vehicle.direction) {
+          case 'north':
+            newY = vehicle.y + speed;
+            break;
+          case 'south':
+            newY = vehicle.y - speed;
+            break;
+          case 'east':
+            newX = vehicle.x - speed;
+            break;
+          case 'west':
+            newX = vehicle.x + speed;
+            break;
+        }
+
+        // Check if passed intersection
+        const hasPassed =
+          (vehicle.direction === 'north' && newY > 110) ||
+          (vehicle.direction === 'south' && newY < -10) ||
+          (vehicle.direction === 'east' && newX < -10) ||
+          (vehicle.direction === 'west' && newX > 110);
+
+        if (hasPassed) {
+          setStats(s => ({ ...s, vehiclesPassed: s.vehiclesPassed + 1 }));
+          return { ...vehicle, passed: true };
+        }
+
+        return { ...vehicle, x: newX, y: newY, stopped: false, waitTime: newWaitTime };
+      });
+
+      // Remove passed vehicles
+      return updated.filter(v => !v.passed);
     });
   };
 
+  // Traffic light phase management
+  useEffect(() => {
+    if (!isRunning) return;
+
+    phaseTimerRef.current = setInterval(() => {
+      setTimer(prev => {
+        const newTimer = prev + 1;
+
+        if (currentPhase === 'NS_GREEN' && newTimer >= settings.greenTime) {
+          setCurrentPhase('NS_YELLOW');
+          setLightStates({ ns: 'yellow', ew: 'red' });
+          return 0;
+        } else if (currentPhase === 'NS_YELLOW' && newTimer >= settings.yellowTime) {
+          const nextPhase = aiDecidePhase();
+          setCurrentPhase(nextPhase);
+          setLightStates(nextPhase === 'NS_GREEN' ?
+            { ns: 'green', ew: 'red' } :
+            { ns: 'red', ew: 'green' }
+          );
+          return 0;
+        } else if (currentPhase === 'EW_GREEN' && newTimer >= settings.greenTime) {
+          setCurrentPhase('EW_YELLOW');
+          setLightStates({ ns: 'red', ew: 'yellow' });
+          return 0;
+        } else if (currentPhase === 'EW_YELLOW' && newTimer >= settings.yellowTime) {
+          const nextPhase = aiDecidePhase();
+          setCurrentPhase(nextPhase);
+          setLightStates(nextPhase === 'NS_GREEN' ?
+            { ns: 'green', ew: 'red' } :
+            { ns: 'red', ew: 'green' }
+          );
+          return 0;
+        }
+
+        return newTimer;
+      });
+    }, 1000);
+
+    return () => clearInterval(phaseTimerRef.current);
+  }, [isRunning, currentPhase, settings]);
+
+  // Vehicle spawning interval
+  useEffect(() => {
+    if (!isRunning) return;
+
+    const spawnInterval = Math.max(500, 3000 - settings.vehicleFreq * 200);
+    spawnTimerRef.current = setInterval(spawnVehicle, spawnInterval);
+
+    return () => clearInterval(spawnTimerRef.current);
+  }, [isRunning, settings.vehicleFreq, emergencyMode]);
+
+  // Animation loop for smooth vehicle movement
+  useEffect(() => {
+    if (!isRunning) return;
+
+    const animate = () => {
+      updateVehicles();
+      animationRef.current = requestAnimationFrame(animate);
+    };
+
+    animationRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(animationRef.current);
+  }, [isRunning, lightStates]);
+
+  // Update statistics
+  useEffect(() => {
+    const { nsCount, ewCount } = getSensorData();
+    const totalWaitTime = vehicles.reduce((sum, v) => sum + v.waitTime, 0);
+    const avgWait = vehicles.length > 0 ? (totalWaitTime / vehicles.length).toFixed(1) : 0;
+    const queueLen = vehicles.filter(v => v.stopped).length;
+    const efficiency = stats.vehiclesPassed > 0
+      ? Math.min(100, Math.round((stats.vehiclesPassed / (stats.vehiclesPassed + vehicles.length)) * 100))
+      : 0;
+
+    setStats(s => ({
+      ...s,
+      nsTraffic: nsCount,
+      ewTraffic: ewCount,
+      totalVehicles: vehicles.length,
+      avgWaitTime: avgWait,
+      queueLength: queueLen,
+      avgSpeed: isRunning ? 35 : 0,
+      efficiency
+    }));
+  }, [vehicles, stats.vehiclesPassed]);
+
+  // Control functions
   const handleStart = () => {
-    if (!isRunning) {
-      setIsRunning(true);
-      setCurrentPhase('ns-green');
-      setTrafficLights({ ns: 'green', ew: 'red' });
-      phaseTimerRef.current = 0;
+    setIsRunning(true);
+    if (currentPhase === 'STOPPED') {
+      setCurrentPhase('NS_GREEN');
+      setLightStates({ ns: 'green', ew: 'red' });
     }
   };
 
-  const handleStop = () => {
+  const handlePause = () => {
     setIsRunning(false);
   };
 
   const handleReset = () => {
     setIsRunning(false);
-    setVehicles([]);
+    setCurrentPhase('STOPPED');
     setTimer(0);
-    phaseTimerRef.current = 0;
-    setCurrentPhase('ns-green');
-    setStatistics({ vehiclesPassed: 0, totalWaitTime: 0, totalVehicles: 0 });
-    setTrafficLights({ ns: 'red', ew: 'red' });
+    setVehicles([]);
+    setLightStates({ ns: 'red', ew: 'red' });
+    setStats({
+      nsTraffic: 0,
+      ewTraffic: 0,
+      totalVehicles: 0,
+      vehiclesPassed: 0,
+      avgWaitTime: 0,
+      avgSpeed: 0,
+      queueLength: 0,
+      efficiency: 0
+    });
+    setEmergencyMode(false);
+    nextIdRef.current = 0;
   };
 
   const handleEmergency = () => {
-    const directions = ['north', 'south', 'east', 'west'];
-    const direction = directions[Math.floor(Math.random() * directions.length)];
-    const ambulance = createVehicle('ambulance', direction);
-    setVehicles(prev => [...prev, ambulance]);
-    setStatistics(prev => ({ ...prev, totalVehicles: prev.totalVehicles + 1 }));
-  };
-
-  const handleModeChange = (mode) => {
-    setCurrentMode(mode);
-    if (mode === 'rush') {
-      setSettings(prev => ({ ...prev, vehicleFrequency: 8 }));
-    } else if (mode === 'normal') {
-      setSettings(prev => ({ ...prev, vehicleFrequency: 5 }));
+    setEmergencyMode(!emergencyMode);
+    if (!emergencyMode) {
+      spawnVehicle();
     }
   };
 
-  const handleWeatherChange = (weather) => {
-    setCurrentWeather(weather);
-  };
-
-  // Calculate statistics
-  const nsCount = vehicles.filter(v => v.direction === 'north' || v.direction === 'south').length;
-  const ewCount = vehicles.filter(v => v.direction === 'east' || v.direction === 'west').length;
-  const avgWaitTime = statistics.totalVehicles > 0 ? 
-    Math.floor((statistics.totalWaitTime / 10) / statistics.totalVehicles) : 0;
-  const avgSpeed = vehicles.length > 0 ? 
-    Math.floor(vehicles.reduce((sum, v) => sum + v.speed, 0) / vehicles.length) : 0;
-  const queueLength = vehicles.filter(v => v.isWaiting).length;
-  const efficiency = statistics.totalVehicles > 0 ? 
-    Math.floor((statistics.vehiclesPassed / statistics.totalVehicles) * 100) : 0;
-
-  const sensorActive = (direction) => {
-    return vehicles.filter(v => v.direction === direction && isNearIntersection(v)).length > 0;
+  const weatherEffects = {
+    clear: 'bg-blue-100',
+    rain: 'bg-gray-300',
+    night: 'bg-gray-800',
+    fog: 'bg-gray-400'
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-8">
-      <style>{`
-        .intersection-bg {
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-          position: relative;
-          overflow: hidden;
-        }
-        .road {
-          background: #2d3748;
-          position: absolute;
-        }
-        .road.vertical {
-          width: 120px;
-          height: 100%;
-          left: 50%;
-          transform: translateX(-50%);
-        }
-        .road.horizontal {
-          height: 120px;
-          width: 100%;
-          top: 50%;
-          transform: translateY(-50%);
-        }
-        .road-marking {
-          background: #fbbf24;
-          position: absolute;
-        }
-        .road.vertical .road-marking {
-          width: 4px;
-          height: 30px;
-          left: 50%;
-          transform: translateX(-50%);
-        }
-        .road.horizontal .road-marking {
-          height: 4px;
-          width: 30px;
-          top: 50%;
-          transform: translateY(-50%);
-        }
-        .vehicle {
-          position: absolute;
-          width: 30px;
-          height: 30px;
-          border-radius: 4px;
-          transition: all 0.1s linear;
-        }
-        .vehicle.car { background: #3b82f6; }
-        .vehicle.truck { background: #ef4444; }
-        .vehicle.bus { background: #10b981; }
-        .vehicle.ambulance { 
-          background: #f59e0b;
-          animation: blink 0.5s infinite;
-        }
-        @keyframes blink {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-        .traffic-light {
-          position: absolute;
-          background: #1f2937;
-          padding: 8px;
-          border-radius: 8px;
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
-          box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-        }
-        .traffic-light.north-south {
-          top: 80px;
-          left: 50%;
-          transform: translateX(-50%);
-        }
-        .traffic-light.east-west {
-          top: 50%;
-          right: 80px;
-          transform: translateY(-50%);
-        }
-        .light {
-          width: 20px;
-          height: 20px;
-          border-radius: 50%;
-          opacity: 0.3;
-        }
-        .light.red { background: #ef4444; }
-        .light.yellow { background: #fbbf24; }
-        .light.green { background: #10b981; }
-        .light.active { opacity: 1; box-shadow: 0 0 15px currentColor; }
-        .sensor {
-          position: absolute;
-          width: 40px;
-          height: 40px;
-          background: rgba(255,255,255,0.2);
-          border: 2px solid #94a3b8;
-          border-radius: 50%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-weight: bold;
-          color: white;
-        }
-        .sensor.active {
-          background: rgba(34, 197, 94, 0.5);
-          border-color: #22c55e;
-          box-shadow: 0 0 20px #22c55e;
-        }
-        .north-sensor { top: 140px; left: 50%; transform: translateX(-50%); }
-        .south-sensor { bottom: 140px; left: 50%; transform: translateX(-50%); }
-        .east-sensor { right: 140px; top: 50%; transform: translateY(-50%); }
-        .west-sensor { left: 140px; top: 50%; transform: translateY(-50%); }
-        .weather-rain {
-          filter: brightness(0.7);
-        }
-        .weather-night {
-          filter: brightness(0.4);
-        }
-        .weather-fog {
-          filter: blur(1px) brightness(0.9);
-        }
-      `}</style>
-
-      <header className="text-center mb-8">
-        <h1 className="text-4xl font-bold text-gray-800 mb-2">🚦 Advanced Traffic Simulation System</h1>
-        <p className="text-gray-600">Advanced Real-time Traffic Management with AI-Powered Controls</p>
-      </header>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-        {/* Intersection */}
-        <div className="lg:col-span-2">
-          <div className={`intersection-bg rounded-xl shadow-2xl ${
-            currentWeather === 'rain' ? 'weather-rain' : 
-            currentWeather === 'night' ? 'weather-night' : 
-            currentWeather === 'fog' ? 'weather-fog' : ''
-          }`} style={{ width: '100%', height: '500px', position: 'relative' }}>
-            <div className="road vertical">
-              {[10, 30, 50, 70, 90].map((top, i) => (
-                <div key={i} className="road-marking" style={{ top: `${top}%` }}></div>
-              ))}
-            </div>
-            <div className="road horizontal">
-              {[10, 30, 50, 70, 90].map((left, i) => (
-                <div key={i} className="road-marking" style={{ left: `${left}%` }}></div>
-              ))}
-            </div>
-
-            {/* Vehicles */}
-            {vehicles.map(vehicle => (
-              <div
-                key={vehicle.id}
-                className={`vehicle ${vehicle.type}`}
-                style={{
-                  left: `${vehicle.position.x}px`,
-                  top: `${vehicle.position.y}px`
-                }}
-              />
-            ))}
-
-            {/* Traffic Lights */}
-            <div className="traffic-light north-south">
-              <div className={`light red ${trafficLights.ns === 'red' ? 'active' : ''}`}></div>
-              <div className={`light yellow ${trafficLights.ns === 'yellow' ? 'active' : ''}`}></div>
-              <div className={`light green ${trafficLights.ns === 'green' ? 'active' : ''}`}></div>
-              <div className="text-white text-xs text-center mt-1">N-S</div>
-            </div>
-
-            <div className="traffic-light east-west">
-              <div className={`light red ${trafficLights.ew === 'red' ? 'active' : ''}`}></div>
-              <div className={`light yellow ${trafficLights.ew === 'yellow' ? 'active' : ''}`}></div>
-              <div className={`light green ${trafficLights.ew === 'green' ? 'active' : ''}`}></div>
-              <div className="text-white text-xs text-center mt-1">E-W</div>
-            </div>
-
-            {/* Sensors */}
-            <div className={`sensor north-sensor ${sensorActive('north') ? 'active' : ''}`}>N</div>
-            <div className={`sensor south-sensor ${sensorActive('south') ? 'active' : ''}`}>S</div>
-            <div className={`sensor east-sensor ${sensorActive('east') ? 'active' : ''}`}>E</div>
-            <div className={`sensor west-sensor ${sensorActive('west') ? 'active' : ''}`}>W</div>
-          </div>
+    <div className={`min-h-screen ${weatherEffects[weather]} transition-colors duration-1000 p-4`}>
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-6 rounded-lg shadow-lg mb-6">
+          <h1 className="text-3xl font-bold mb-2">🚦 AI-Powered Traffic Simulation System</h1>
+          <p className="text-blue-100">Advanced Real-time Traffic Management with Intelligent Controls</p>
         </div>
 
-        {/* Controls */}
-        <div className="space-y-6">
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <h3 className="text-xl font-bold mb-4">🎮 Control Panel</h3>
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <button onClick={handleStart} className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold">
-                ▶ Start
-              </button>
-              <button onClick={handleStop} className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg font-semibold">
-                ⏸ Pause
-              </button>
-              <button onClick={handleReset} className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-semibold">
-                🔄 Reset
-              </button>
-              <button onClick={handleEmergency} className="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded-lg font-semibold">
-                🚑 Emergency
-              </button>
-            </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Traffic Intersection */}
+          <div className="lg:col-span-2">
+            <div className="bg-white rounded-lg shadow-lg p-6">
+              <div className="relative w-full aspect-square bg-gray-200 rounded-lg overflow-hidden">
+                {/* Roads */}
+                <div className="absolute inset-0">
+                  {/* Vertical road */}
+                  <div className="absolute left-1/2 top-0 bottom-0 w-1/5 bg-gray-700 transform -translate-x-1/2">
+                    <div className="absolute left-1/2 top-0 bottom-0 w-1 bg-yellow-400 transform -translate-x-1/2"
+                      style={{ backgroundImage: 'repeating-linear-gradient(0deg, yellow 0px, yellow 20px, transparent 20px, transparent 40px)' }} />
+                  </div>
+                  {/* Horizontal road */}
+                  <div className="absolute top-1/2 left-0 right-0 h-1/5 bg-gray-700 transform -translate-y-1/2">
+                    <div className="absolute top-1/2 left-0 right-0 h-1 bg-yellow-400 transform -translate-y-1/2"
+                      style={{ backgroundImage: 'repeating-linear-gradient(90deg, yellow 0px, yellow 20px, transparent 20px, transparent 40px)' }} />
+                  </div>
+                  {/* Intersection */}
+                  <div className="absolute top-1/2 left-1/2 w-1/5 h-1/5 bg-gray-700 transform -translate-x-1/2 -translate-y-1/2" />
+                </div>
 
-            <h4 className="font-semibold mb-2">🎚️ Traffic Mode</h4>
-            <div className="grid grid-cols-2 gap-2 mb-4">
-              {['normal', 'rush', 'smart', 'manual'].map(mode => (
-                <button
-                  key={mode}
-                  onClick={() => handleModeChange(mode)}
-                  className={`px-3 py-2 rounded-lg font-medium capitalize ${
-                    currentMode === mode ? 'bg-indigo-500 text-white' : 'bg-gray-200 hover:bg-gray-300'
-                  }`}
-                >
-                  {mode}
+                {/* Traffic Lights */}
+                <div className="absolute top-[38%] left-[38%] bg-gray-900 p-2 rounded-lg">
+                  <div className={`w-4 h-4 rounded-full mb-1 ${lightStates.ns === 'red' ? 'bg-red-600' : 'bg-red-900'}`} />
+                  <div className={`w-4 h-4 rounded-full mb-1 ${lightStates.ns === 'yellow' ? 'bg-yellow-400' : 'bg-yellow-900'}`} />
+                  <div className={`w-4 h-4 rounded-full ${lightStates.ns === 'green' ? 'bg-green-500' : 'bg-green-900'}`} />
+                  <div className="text-white text-xs text-center mt-1">NS</div>
+                </div>
+
+                <div className="absolute top-[38%] right-[38%] bg-gray-900 p-2 rounded-lg">
+                  <div className={`w-4 h-4 rounded-full mb-1 ${lightStates.ew === 'red' ? 'bg-red-600' : 'bg-red-900'}`} />
+                  <div className={`w-4 h-4 rounded-full mb-1 ${lightStates.ew === 'yellow' ? 'bg-yellow-400' : 'bg-yellow-900'}`} />
+                  <div className={`w-4 h-4 rounded-full ${lightStates.ew === 'green' ? 'bg-green-500' : 'bg-green-900'}`} />
+                  <div className="text-white text-xs text-center mt-1">EW</div>
+                </div>
+
+                {/* Sensors */}
+                {['N', 'S', 'E', 'W'].map((dir, idx) => {
+                  const positions = [
+                    'top-[20%] left-1/2 -translate-x-1/2',
+                    'bottom-[20%] left-1/2 -translate-x-1/2',
+                    'top-1/2 right-[20%] -translate-y-1/2',
+                    'top-1/2 left-[20%] -translate-y-1/2'
+                  ];
+                  const hasVehicles = (dir === 'N' && stats.nsTraffic > 0) ||
+                    (dir === 'S' && stats.nsTraffic > 0) ||
+                    (dir === 'E' && stats.ewTraffic > 0) ||
+                    (dir === 'W' && stats.ewTraffic > 0);
+                  return (
+                    <div key={dir} className={`absolute ${positions[idx]} bg-blue-500 text-white px-2 py-1 rounded text-xs font-bold ${hasVehicles ? 'animate-pulse' : ''}`}>
+                      {dir}
+                    </div>
+                  );
+                })}
+
+                {/* Vehicles */}
+                {vehicles.map(vehicle => (
+                  <div
+                    key={vehicle.id}
+                    className="absolute"
+                    style={{
+                      left: `${vehicle.x}%`,
+                      top: `${vehicle.y}%`,
+                      transform: 'translate(-50%, -50%)',
+                    }}
+                  >
+                    {vehicle.isEmergency ? (
+                      <Ambulance
+                        className={`${vehicle.stopped ? 'text-red-700' : 'text-red-500'}`}
+                        size={60}
+                      />
+                    ) : (
+                      <Car
+                        className={`${vehicle.stopped ? 'text-blue-900' : 'text-blue-500'}`}
+                        size={45}
+                      />
+                    )}
+                  </div>
+                ))}
+
+              </div>
+            </div>
+          </div>
+
+          {/* Control Panel */}
+          <div className="space-y-6">
+            {/* Main Controls */}
+            <div className="bg-white rounded-lg shadow-lg p-6">
+              <h3 className="text-xl font-bold mb-4">🎮 Control Panel</h3>
+              <div className="grid grid-cols-2 gap-3">
+                <button onClick={handleStart} disabled={isRunning} className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white py-3 rounded-lg font-semibold transition">
+                  <Play size={20} /> Start
                 </button>
-              ))}
+                <button onClick={handlePause} disabled={!isRunning} className="flex items-center justify-center gap-2 bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white py-3 rounded-lg font-semibold transition">
+                  <Pause size={20} /> Pause
+                </button>
+                <button onClick={handleReset} className="flex items-center justify-center gap-2 bg-orange-600 hover:bg-orange-700 text-white py-3 rounded-lg font-semibold transition">
+                  <RotateCcw size={20} /> Reset
+                </button>
+                <button onClick={handleEmergency} className={`flex items-center justify-center gap-2 ${emergencyMode ? 'bg-red-700' : 'bg-red-600'} hover:bg-red-700 text-white py-3 rounded-lg font-semibold transition`}>
+                  <Ambulance size={20} /> {emergencyMode ? 'Active' : 'Emergency'}
+                </button>
+              </div>
+
+              {/* Mode Selection */}
+              <div className="mt-6">
+                <h4 className="font-semibold mb-3">🎚️ Traffic Mode</h4>
+                <div className="grid grid-cols-2 gap-2">
+                  {['normal', 'rush', 'smart', 'manual'].map(m => (
+                    <button
+                      key={m}
+                      onClick={() => setMode(m)}
+                      className={`py-2 px-3 rounded-lg font-semibold transition ${mode === m ? 'bg-blue-600 text-white' : 'bg-gray-200 hover:bg-gray-300'
+                        }`}
+                    >
+                      {m.charAt(0).toUpperCase() + m.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Settings */}
+              <div className="mt-6 space-y-4">
+                <h4 className="font-semibold">⚙️ Timing Settings</h4>
+                <div>
+                  <label className="text-sm text-gray-600">Green Duration: {settings.greenTime}s</label>
+                  <input
+                    type="range"
+                    min="5"
+                    max="30"
+                    value={settings.greenTime}
+                    onChange={(e) => setSettings({ ...settings, greenTime: parseInt(e.target.value) })}
+                    className="w-full"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">Yellow Duration: {settings.yellowTime}s</label>
+                  <input
+                    type="range"
+                    min="2"
+                    max="8"
+                    value={settings.yellowTime}
+                    onChange={(e) => setSettings({ ...settings, yellowTime: parseInt(e.target.value) })}
+                    className="w-full"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">Spawn Rate: {settings.vehicleFreq}</label>
+                  <input
+                    type="range"
+                    min="1"
+                    max="10"
+                    value={settings.vehicleFreq}
+                    onChange={(e) => setSettings({ ...settings, vehicleFreq: parseInt(e.target.value) })}
+                    className="w-full"
+                  />
+                </div>
+              </div>
             </div>
 
-            <div className="space-y-3">
-              <div>
-                <label className="block text-sm font-medium mb-1">Green Duration: {settings.greenTime}s</label>
-                <input
-                  type="range"
-                  min="5"
-                  max="30"
-                  value={settings.greenTime}
-                  onChange={(e) => setSettings(prev => ({ ...prev, greenTime: parseInt(e.target.value) }))}
-                  className="w-full"
-                />
+            {/* System Status */}
+            <div className="bg-white rounded-lg shadow-lg p-6">
+              <h3 className="text-xl font-bold mb-4">📊 System Status</h3>
+              <div className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-600">Current Phase:</span>
+                  <span className="font-bold text-blue-600">{currentPhase}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-600">Timer:</span>
+                  <span className="font-bold">{timer}s</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-600">N-S Traffic:</span>
+                  <span className="font-bold text-green-600">{stats.nsTraffic}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-600">E-W Traffic:</span>
+                  <span className="font-bold text-green-600">{stats.ewTraffic}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-600">Total Vehicles:</span>
+                  <span className="font-bold">{stats.totalVehicles}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-600">Avg Wait Time:</span>
+                  <span className="font-bold">{stats.avgWaitTime}s</span>
+                </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Yellow Duration: {settings.yellowTime}s</label>
-                <input
-                  type="range"
-                  min="2"
-                  max="8"
-                  value={settings.yellowTime}
-                  onChange={(e) => setSettings(prev => ({ ...prev, yellowTime: parseInt(e.target.value) }))}
-                  className="w-full"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Spawn Rate: {settings.vehicleFrequency}</label>
-                <input
-                  type="range"
-                  min="1"
-                  max="10"
-                  value={settings.vehicleFrequency}
-                  onChange={(e) => setSettings(prev => ({ ...prev, vehicleFrequency: parseInt(e.target.value) }))}
-                  className="w-full"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <h3 className="text-xl font-bold mb-4">📊 System Status</h3>
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div><span className="font-medium">Phase:</span> {isRunning ? currentPhase.toUpperCase().replace('-', ' ') : 'Stopped'}</div>
-              <div><span className="font-medium">Timer:</span> {Math.floor(timer / 10)}s</div>
-              <div><span className="font-medium">N-S Traffic:</span> {nsCount}</div>
-              <div><span className="font-medium">E-W Traffic:</span> {ewCount}</div>
-              <div><span className="font-medium">Total:</span> {statistics.totalVehicles}</div>
-              <div><span className="font-medium">Avg Wait:</span> {avgWaitTime}s</div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Weather Panel */}
-      <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
-        <h3 className="text-xl font-bold mb-4">🌤️ Weather Conditions</h3>
-        <div className="grid grid-cols-4 gap-3">
-          {[
-            { id: 'clear', icon: '☀️', label: 'Clear' },
-            { id: 'rain', icon: '🌧️', label: 'Rain' },
-            { id: 'night', icon: '🌙', label: 'Night' },
-            { id: 'fog', icon: '🌫️', label: 'Fog' }
-          ].map(weather => (
-            <button
-              key={weather.id}
-              onClick={() => handleWeatherChange(weather.id)}
-              className={`px-4 py-3 rounded-lg font-medium ${
-                currentWeather === weather.id ? 'bg-blue-500 text-white' : 'bg-gray-200 hover:bg-gray-300'
-              }`}
-            >
-              {weather.icon} {weather.label}
-            </button>
-          ))}
+        {/* Weather Panel */}
+        <div className="mt-6 bg-white rounded-lg shadow-lg p-6">
+          <h3 className="text-xl font-bold mb-4">🌤️ Weather Conditions</h3>
+          <div className="grid grid-cols-4 gap-3">
+            {[
+              { name: 'clear', icon: '☀️', label: 'Clear' },
+              { name: 'rain', icon: '🌧️', label: 'Rain' },
+              { name: 'night', icon: '🌙', label: 'Night' },
+              { name: 'fog', icon: '🌫️', label: 'Fog' }
+            ].map(w => (
+              <button
+                key={w.name}
+                onClick={() => setWeather(w.name)}
+                className={`py-3 px-4 rounded-lg font-semibold transition ${weather === w.name ? 'bg-blue-600 text-white' : 'bg-gray-200 hover:bg-gray-300'
+                  }`}
+              >
+                {w.icon} {w.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Statistics */}
+        <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-6">
+          <div className="bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-lg shadow-lg p-6">
+            <h4 className="text-sm opacity-90 mb-2">🚗 Vehicles Passed</h4>
+            <div className="text-3xl font-bold">{stats.vehiclesPassed}</div>
+          </div>
+          <div className="bg-gradient-to-br from-green-500 to-green-600 text-white rounded-lg shadow-lg p-6">
+            <h4 className="text-sm opacity-90 mb-2">⚡ Average Speed</h4>
+            <div className="text-3xl font-bold">{stats.avgSpeed} km/h</div>
+          </div>
+          <div className="bg-gradient-to-br from-orange-500 to-orange-600 text-white rounded-lg shadow-lg p-6">
+            <h4 className="text-sm opacity-90 mb-2">⏱️ Queue Length</h4>
+            <div className="text-3xl font-bold">{stats.queueLength}</div>
+          </div>
+          <div className="bg-gradient-to-br from-purple-500 to-purple-600 text-white rounded-lg shadow-lg p-6">
+            <h4 className="text-sm opacity-90 mb-2">✨ Efficiency</h4>
+            <div className="text-3xl font-bold">{stats.efficiency}%</div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="mt-6 bg-gray-800 text-white text-center py-4 rounded-lg">
+          <p>© 2024 AI-Powered Traffic Simulation System - Intelligent Real-time Traffic Management</p>
         </div>
       </div>
-
-      {/* Statistics */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { label: '🚗 Vehicles Passed', value: statistics.vehiclesPassed },
-          { label: '⚡ Average Speed', value: avgSpeed },
-          { label: '⏱️ Queue Length', value: queueLength },
-          { label: '✨ Efficiency', value: `${efficiency}%` }
-        ].map((stat, i) => (
-          <div key={i} className="bg-white rounded-xl shadow-lg p-6 text-center">
-            <h4 className="text-gray-600 mb-2">{stat.label}</h4>
-            <div className="text-3xl font-bold text-indigo-600">{stat.value}</div>
-          </div>
-        ))}
-      </div>
-
-      <footer className="text-center mt-8 text-gray-600">
-        <p>© 2024 Enhanced Traffic Simulation System - Advanced Real-time Traffic Management with AI</p>
-      </footer>
     </div>
   );
 };

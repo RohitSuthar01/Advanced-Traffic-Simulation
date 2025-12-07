@@ -1,13 +1,14 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 const firebaseConfig = {
-  apiKey: "AIzaSyC9XW0U_ZhmscTXeeUfpztMlRQ4dnuf2Y0",
-  authDomain: "trafficlightsim.firebaseapp.com",
-  projectId: "trafficlightsim",
-  storageBucket: "trafficlightsim.firebasestorage.app",
-  messagingSenderId: "43342606859",
-  appId: "1:43342606859:web:7b50e371f27c1d98184d0e"
+  apiKey: "AIzaSyA0nV9X4tyar3w1GuShuvth0DT5Sz3KVFk",
+  authDomain: "advanced-traffic-simulat-d8be3.firebaseapp.com",
+  projectId: "advanced-traffic-simulat-d8be3",
+  storageBucket: "advanced-traffic-simulat-d8be3.firebasestorage.app",
+  messagingSenderId: "322223639174",
+  appId: "1:322223639174:web:dcb7869ca964eb13d95f07",
+  databseURL: "https://advanced-traffic-simulat-d8be3-default-rtdb.firebaseio.com"
 };
-const app = initializeApp(firebaseConfig);
+export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
