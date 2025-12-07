@@ -1,6 +1,6 @@
 # 🚦 Advanced Traffic Management System
 
-![Screenshot](public/images/screen.png)
+
 
 The Advanced Traffic Management System (ATMS) is a web-based project designed to improve road traffic efficiency and safety using modern technologies. It provides a smart and interactive platform to monitor, analyze, and control traffic flow in real time.
 
